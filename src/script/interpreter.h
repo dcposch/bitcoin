@@ -136,6 +136,10 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_TAPROOT,
 
+    // P2MR validation (BIP360 draft): witness v2, script-path-only
+    //
+    SCRIPT_VERIFY_P2MR,
+
     // Making unknown Taproot leaf versions non-standard
     //
     SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION,
@@ -238,6 +242,7 @@ struct ScriptExecutionData
 inline constexpr size_t WITNESS_V0_SCRIPTHASH_SIZE = 32;
 inline constexpr size_t WITNESS_V0_KEYHASH_SIZE = 20;
 inline constexpr size_t WITNESS_V1_TAPROOT_SIZE = 32;
+inline constexpr size_t WITNESS_V2_P2MR_SIZE = 32;
 
 inline constexpr uint8_t TAPROOT_LEAF_MASK = 0xfe;
 inline constexpr uint8_t TAPROOT_LEAF_TAPSCRIPT = 0xc0;
@@ -245,6 +250,8 @@ inline constexpr size_t TAPROOT_CONTROL_BASE_SIZE = 33;
 inline constexpr size_t TAPROOT_CONTROL_NODE_SIZE = 32;
 inline constexpr size_t TAPROOT_CONTROL_MAX_NODE_COUNT = 128;
 inline constexpr size_t TAPROOT_CONTROL_MAX_SIZE = TAPROOT_CONTROL_BASE_SIZE + TAPROOT_CONTROL_NODE_SIZE * TAPROOT_CONTROL_MAX_NODE_COUNT;
+inline constexpr size_t P2MR_CONTROL_BASE_SIZE = 1;
+inline constexpr size_t P2MR_CONTROL_MAX_SIZE = P2MR_CONTROL_BASE_SIZE + TAPROOT_CONTROL_NODE_SIZE * TAPROOT_CONTROL_MAX_NODE_COUNT;
 
 extern const HashWriter HASHER_TAPSIGHASH; //!< Hasher with tag "TapSighash" pre-fed to it.
 extern const HashWriter HASHER_TAPLEAF;    //!< Hasher with tag "TapLeaf" pre-fed to it.
