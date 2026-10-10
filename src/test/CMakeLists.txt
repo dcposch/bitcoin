@@ -106,6 +106,7 @@ add_executable(test_bitcoin
   sighash_tests.cpp
   sigopcount_tests.cpp
   skiplist_tests.cpp
+  slhdsa_tests.cpp
   sock_tests.cpp
   span_tests.cpp
   streams_tests.cpp
@@ -155,6 +156,7 @@ target_json_data_sources(test_bitcoin
   data/script_tests.json
   data/sighash.json
   data/siphash.json
+  data/slhdsa_acvp.json
   data/tx_invalid.json
   data/tx_valid.json
 )

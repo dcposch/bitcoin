@@ -13,6 +13,7 @@ add_library(test_util STATIC EXCLUDE_FROM_ALL
   random.cpp
   script.cpp
   setup_common.cpp
+  slhdsa.cpp
   time.cpp
   transaction_utils.cpp
   txmempool.cpp
