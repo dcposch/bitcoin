@@ -136,10 +136,6 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_TAPROOT,
 
-    // P2MR validation (BIP360 draft): witness v2, script-path-only
-    //
-    SCRIPT_VERIFY_P2MR,
-
     // Making unknown Taproot leaf versions non-standard
     //
     SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION,
@@ -149,6 +145,10 @@ enum class script_verify_flag_name : uint8_t {
 
     // Making unknown public key versions (in BIP 342 scripts) non-standard
     SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_PUBKEYTYPE,
+
+    // P2MR validation (BIP 360 draft): witness v2, script path only
+    //
+    SCRIPT_VERIFY_P2MR,
 
     // Constants to point to the highest flag in use. Add new flags above this line.
     //

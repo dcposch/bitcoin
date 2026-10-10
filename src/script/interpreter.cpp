@@ -2053,6 +2053,8 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
             return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
         }
         execdata.m_tapleaf_hash_init = true;
+        // BIP 360: a script tree of depth zero (m = 0) is spendable without executing the script.
+        if (control.size() == P2MR_CONTROL_BASE_SIZE) return set_success(serror);
         if ((control[0] & TAPROOT_LEAF_MASK) == TAPROOT_LEAF_TAPSCRIPT) {
             // Tapscript (leaf version 0xc0)
             exec_script = CScript(script.begin(), script.end());
@@ -2264,10 +2266,10 @@ const std::map<std::string, script_verify_flag_name>& ScriptFlagNamesToEnum()
         FLAG_NAME(WITNESS_PUBKEYTYPE),
         FLAG_NAME(CONST_SCRIPTCODE),
         FLAG_NAME(TAPROOT),
-        FLAG_NAME(P2MR),
         FLAG_NAME(DISCOURAGE_UPGRADABLE_PUBKEYTYPE),
         FLAG_NAME(DISCOURAGE_OP_SUCCESS),
         FLAG_NAME(DISCOURAGE_UPGRADABLE_TAPROOT_VERSION),
+        FLAG_NAME(P2MR),
     };
 #undef FLAG_NAME
     return g_names_to_enum;

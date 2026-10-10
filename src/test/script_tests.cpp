@@ -1745,6 +1745,31 @@ BOOST_AUTO_TEST_CASE(p2mr_witness_v2_validation)
     witness_bad_control.stack = {script_bytes, std::vector<unsigned char>{0xc0}};
     BOOST_CHECK(!VerifyScript(CScript{}, script_pubkey, &witness_bad_control, flags, BaseSignatureChecker{}, &err));
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+
+    // BIP 360: a depth zero tree succeeds without script execution, if the root matches.
+    const std::vector<unsigned char> fail_script{OP_RETURN};
+    const uint256 fail_leaf = ComputeTapleafHash(TAPROOT_LEAF_TAPSCRIPT, std::span(fail_script));
+    CScriptWitness witness_depth0;
+    witness_depth0.stack = {fail_script, std::vector<unsigned char>{0xc1}};
+    BOOST_CHECK(VerifyScript(CScript{}, CScript() << OP_2 << ToByteVector(fail_leaf), &witness_depth0, flags, BaseSignatureChecker{}, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    // A wrong root still fails at depth zero.
+    BOOST_CHECK(!VerifyScript(CScript{}, script_pubkey, &witness_depth0, flags, BaseSignatureChecker{}, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+
+    // At depth one, the script is executed.
+    const uint256 sibling{uint256::ONE};
+    const uint256 root1 = ComputeTapbranchHash(fail_leaf, sibling);
+    std::vector<unsigned char> control1{0xc1};
+    control1.insert(control1.end(), sibling.begin(), sibling.end());
+    CScriptWitness witness_depth1;
+    witness_depth1.stack = {fail_script, control1};
+    BOOST_CHECK(!VerifyScript(CScript{}, CScript() << OP_2 << ToByteVector(root1), &witness_depth1, flags, BaseSignatureChecker{}, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OP_RETURN);
+    // A control block of 1 + 32 * m + 1 bytes has the wrong size.
+    witness_depth1.stack[1].push_back(0);
+    BOOST_CHECK(!VerifyScript(CScript{}, CScript() << OP_2 << ToByteVector(root1), &witness_depth1, flags, BaseSignatureChecker{}, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_TAPROOT_WRONG_CONTROL_SIZE);
 }
 
 BOOST_AUTO_TEST_CASE(formatscriptflags)
