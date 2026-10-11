@@ -29,6 +29,10 @@ std::string DeploymentName(Consensus::BuriedDeployment dep)
         return "csv";
     case Consensus::DEPLOYMENT_SEGWIT:
         return "segwit";
+    case Consensus::DEPLOYMENT_P2MR:
+        return "p2mr";
+    case Consensus::DEPLOYMENT_PQSIG:
+        return "pqsig";
     } // no default case, so the compiler can warn about missing cases
     return "";
 }
@@ -45,6 +49,10 @@ std::optional<Consensus::BuriedDeployment> GetBuriedDeployment(const std::string
         return Consensus::BuriedDeployment::DEPLOYMENT_CLTV;
     } else if (name == "csv") {
         return Consensus::BuriedDeployment::DEPLOYMENT_CSV;
+    } else if (name == "p2mr") {
+        return Consensus::BuriedDeployment::DEPLOYMENT_P2MR;
+    } else if (name == "pqsig") {
+        return Consensus::BuriedDeployment::DEPLOYMENT_PQSIG;
     }
     return std::nullopt;
 }

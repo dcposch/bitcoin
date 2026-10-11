@@ -8,6 +8,7 @@
 #include <crypto/ripemd160.h>
 #include <crypto/sha1.h>
 #include <crypto/sha256.h>
+#include <crypto/slhdsa.h>
 #include <prevector.h>
 #include <pubkey.h>
 #include <script/script.h>
@@ -22,6 +23,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 
 typedef std::vector<unsigned char> valtype;
 
@@ -1112,6 +1114,74 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                 }
                 break;
 
+                case OP_CHECKSIGPQADD:
+                {
+                    // Only available in tapscript of enabled output types (P2MR) with
+                    // SCRIPT_VERIFY_PQSIG. In other tapscript, opcode 0xca is OP_SUCCESS202
+                    // and the script succeeds before execution. In other scripts it is unknown.
+                    if (sigversion != SigVersion::TAPSCRIPT || !execdata.m_pqsig_enabled) return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+
+                    // (chunk_1 ... chunk_c c n pubkey -- num)
+                    // The steps follow the order of the specification. A failure in any
+                    // step fails the script, so the elements are popped only at the end.
+                    // 1. At least 3 stack elements.
+                    if (stack.size() < 3) return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    // 2. The public key P, the number n, and the count c.
+                    const valtype& pubkey = stacktop(-1);
+                    // 3. n is at most 4 bytes (CScriptNum throws otherwise).
+                    const CScriptNum num(stacktop(-2), fRequireMinimal);
+                    // 4. c is the empty vector or one byte from 0x01 to 0x7f.
+                    const valtype& count_elem = stacktop(-3);
+                    if (count_elem.size() > 1) return set_error(serror, SCRIPT_ERR_SLHDSA_CHUNK_COUNT);
+                    const unsigned int count{count_elem.empty() ? 0U : count_elem[0]};
+                    if (count_elem.size() == 1 && (count < 1 || count > MAX_SLHDSA_CHUNK_COUNT)) return set_error(serror, SCRIPT_ERR_SLHDSA_CHUNK_COUNT);
+                    // 5. c chunks. chunk_c is stacktop(-4), and chunk_1 is stacktop(-3 - c).
+                    if (stack.size() < 3 + count) return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    // 6. P is not empty.
+                    if (pubkey.empty()) return set_error(serror, SCRIPT_ERR_TAPSCRIPT_EMPTY_PUBKEY);
+                    // 7. A check with a signature uses validation budget. The charge depends on the key type.
+                    if (count > 0) {
+                        assert(execdata.m_validation_weight_left_init);
+                        const int64_t charge{pubkey[0] == SLHDSA_KEY_TYPE_SHA2_128S ? VALIDATION_WEIGHT_PER_SLHDSA_CHECK : VALIDATION_WEIGHT_PER_UNKNOWN_PQ_KEY_CHECK};
+                        execdata.m_validation_weight_left -= charge;
+                        if (execdata.m_validation_weight_left < 0) {
+                            return set_error(serror, SCRIPT_ERR_TAPSCRIPT_VALIDATION_WEIGHT);
+                        }
+                    }
+                    if (pubkey[0] == SLHDSA_KEY_TYPE_SHA2_128S) {
+                        // 8. An SLH-DSA-SHA2-128s key is 33 bytes.
+                        if (pubkey.size() != SLHDSA_SHA2_128S_PUBKEY_SIZE) return set_error(serror, SCRIPT_ERR_SLHDSA_PUBKEY_SIZE);
+                        // 9. Check the signature, if there is one.
+                        if (count > 0) {
+                            if (count != SLHDSA_SHA2_128S_CHUNK_COUNT) return set_error(serror, SCRIPT_ERR_SLHDSA_SIG_SIZE);
+                            // chunk_1 to chunk_15 are 520 bytes, and chunk_16 is 56 bytes.
+                            for (unsigned int i = 2; i <= count; ++i) {
+                                if (stacktop(-3 - int(i)).size() != MAX_SCRIPT_ELEMENT_SIZE) return set_error(serror, SCRIPT_ERR_SLHDSA_SIG_SIZE);
+                            }
+                            if (stacktop(-4).size() != SLHDSA_SHA2_128S_LAST_CHUNK_SIZE) return set_error(serror, SCRIPT_ERR_SLHDSA_SIG_SIZE);
+                            // sig = chunk_1 || ... || chunk_c
+                            std::vector<unsigned char> sig;
+                            sig.reserve((count - 1) * MAX_SCRIPT_ELEMENT_SIZE + SLHDSA_SHA2_128S_LAST_CHUNK_SIZE);
+                            for (unsigned int i = count; i >= 1; --i) {
+                                const valtype& chunk = stacktop(-3 - int(i));
+                                sig.insert(sig.end(), chunk.begin(), chunk.end());
+                            }
+                            if (!checker.CheckSLHDSASignature(sig, std::span{pubkey}.subspan(1), sigversion, execdata, serror)) return false;
+                        }
+                    } else {
+                        // Unknown key type: no verification, the signature is treated as valid.
+                        // New key types can be defined here by a soft fork.
+                        if ((flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_PUBKEYTYPE) != 0) {
+                            return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_PUBKEYTYPE);
+                        }
+                    }
+                    // 10. Push n, or n + 1 if there is a signature.
+                    const CScriptNum result{count > 0 ? num + 1 : num};
+                    for (unsigned int i = 0; i < 3 + count; ++i) popstack(stack);
+                    stack.push_back(result.getvch());
+                }
+                break;
+
                 case OP_CHECKMULTISIG:
                 case OP_CHECKMULTISIGVERIFY:
                 {
@@ -1491,32 +1561,23 @@ static bool HandleMissingData(MissingDataBehavior mdb)
     assert(!"Unknown MissingDataBehavior value");
 }
 
-template<typename T>
-bool SignatureHashSchnorr(uint256& hash_out, ScriptExecutionData& execdata, const T& tx_to, uint32_t in_pos, uint8_t hash_type, SigVersion sigversion, const PrecomputedTransactionData& cache, MissingDataBehavior mdb)
+/** Write epoch || SigMsg(hash_type, ext_flag) || ext (BIP 341 and BIP 342) to a stream.
+ *  For SigVersion::TAPSCRIPT, ext uses the given key_version. */
+template<typename T, typename Stream>
+static bool WriteTaprootSigMsg(Stream& ss, ScriptExecutionData& execdata, const T& tx_to, uint32_t in_pos, uint8_t hash_type, SigVersion sigversion, uint8_t key_version, const PrecomputedTransactionData& cache)
 {
-    uint8_t ext_flag, key_version;
+    uint8_t ext_flag;
     switch (sigversion) {
     case SigVersion::TAPROOT:
         ext_flag = 0;
-        // key_version is not used and left uninitialized.
         break;
     case SigVersion::TAPSCRIPT:
         ext_flag = 1;
-        // key_version must be 0 for now, representing the current version of
-        // 32-byte public keys in the tapscript signature opcode execution.
-        // An upgradable public key version (with a size not 32-byte) may
-        // request a different key_version with a new sigversion.
-        key_version = 0;
         break;
     default:
         assert(false);
     }
     assert(in_pos < tx_to.vin.size());
-    if (!(cache.m_bip341_taproot_ready && cache.m_spent_outputs_ready)) {
-        return HandleMissingData(mdb);
-    }
-
-    HashWriter ss{HASHER_TAPSIGHASH};
 
     // Epoch
     static constexpr uint8_t EPOCH = 0;
@@ -1576,10 +1637,82 @@ bool SignatureHashSchnorr(uint256& hash_out, ScriptExecutionData& execdata, cons
         assert(execdata.m_codeseparator_pos_init);
         ss << execdata.m_codeseparator_pos;
     }
+    return true;
+}
 
+template<typename T>
+bool SignatureHashSchnorr(uint256& hash_out, ScriptExecutionData& execdata, const T& tx_to, uint32_t in_pos, uint8_t hash_type, SigVersion sigversion, const PrecomputedTransactionData& cache, MissingDataBehavior mdb)
+{
+    assert(sigversion == SigVersion::TAPROOT || sigversion == SigVersion::TAPSCRIPT);
+    assert(in_pos < tx_to.vin.size());
+    if (!(cache.m_bip341_taproot_ready && cache.m_spent_outputs_ready)) {
+        return HandleMissingData(mdb);
+    }
+
+    HashWriter ss{HASHER_TAPSIGHASH};
+    // key_version must be 0 for now, representing the current version of
+    // 32-byte public keys in the tapscript signature opcode execution.
+    // An upgradable public key version (with a size not 32-byte) may
+    // request a different key_version with a new sigversion.
+    // For SigVersion::TAPROOT, key_version is not used.
+    static constexpr uint8_t KEY_VERSION_BIP340{0};
+    if (!WriteTaprootSigMsg(ss, execdata, tx_to, in_pos, hash_type, sigversion, KEY_VERSION_BIP340, cache)) return false;
     hash_out = ss.GetSHA256();
     return true;
 }
+
+// Explicit instantiations, because sign.cpp calls this template from another translation unit.
+template bool SignatureHashSchnorr(uint256&, ScriptExecutionData&, const CTransaction&, uint32_t, uint8_t, SigVersion, const PrecomputedTransactionData&, MissingDataBehavior);
+template bool SignatureHashSchnorr(uint256&, ScriptExecutionData&, const CMutableTransaction&, uint32_t, uint8_t, SigVersion, const PrecomputedTransactionData&, MissingDataBehavior);
+
+namespace {
+/** Minimal stream that appends serialized data to a byte vector. */
+class ByteVectorWriter
+{
+    std::vector<unsigned char>& m_out;
+
+public:
+    explicit ByteVectorWriter(std::vector<unsigned char>& out) : m_out{out} {}
+    void write(std::span<const std::byte> src)
+    {
+        m_out.insert(m_out.end(), UCharCast(src.data()), UCharCast(src.data()) + src.size());
+    }
+    template <typename T>
+    ByteVectorWriter& operator<<(const T& obj)
+    {
+        ::Serialize(*this, obj);
+        return *this;
+    }
+};
+} // namespace
+
+template<typename T>
+bool SignatureMessageSLHDSA(std::vector<unsigned char>& msg_out, ScriptExecutionData& execdata, const T& tx_to, uint32_t in_pos, const PrecomputedTransactionData& cache, MissingDataBehavior mdb)
+{
+    assert(in_pos < tx_to.vin.size());
+    if (!(cache.m_bip341_taproot_ready && cache.m_spent_outputs_ready)) {
+        return HandleMissingData(mdb);
+    }
+    static const uint256 TAG_HASH{[] {
+        static constexpr std::string_view TAG{"SLHSighash"};
+        uint256 hash;
+        CSHA256().Write(UCharCast(TAG.data()), TAG.size()).Finalize(hash.begin());
+        return hash;
+    }()};
+
+    msg_out.clear();
+    ByteVectorWriter ss{msg_out};
+    // ser_tag("SLHSighash") = SHA256("SLHSighash") || SHA256("SLHSighash")
+    ss << TAG_HASH << TAG_HASH;
+    // Only SIGHASH_DEFAULT is available, and key_version is the key type.
+    // WriteTaprootSigMsg writes the epoch 0x00 first.
+    const bool ret{WriteTaprootSigMsg(ss, execdata, tx_to, in_pos, SIGHASH_DEFAULT, SigVersion::TAPSCRIPT, SLHDSA_KEY_TYPE_SHA2_128S, cache)};
+    assert(ret);
+    return true;
+}
+
+template bool SignatureMessageSLHDSA(std::vector<unsigned char>&, ScriptExecutionData&, const CTransaction&, uint32_t, const PrecomputedTransactionData&, MissingDataBehavior);
+template bool SignatureMessageSLHDSA(std::vector<unsigned char>&, ScriptExecutionData&, const CMutableTransaction&, uint32_t, const PrecomputedTransactionData&, MissingDataBehavior);
 
 int SigHashCache::CacheIndex(int32_t hash_type) const noexcept
 {
@@ -1754,6 +1887,28 @@ bool GenericTransactionSignatureChecker<T>::CheckSchnorrSignature(std::span<cons
 }
 
 template <class T>
+bool GenericTransactionSignatureChecker<T>::VerifySLHDSASignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, std::span<const unsigned char> msg) const
+{
+    return slhdsa::Verify(pubkey, msg, sig);
+}
+
+template <class T>
+bool GenericTransactionSignatureChecker<T>::CheckSLHDSASignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror) const
+{
+    assert(sigversion == SigVersion::TAPSCRIPT);
+    // The caller enforces the public key and signature sizes.
+    assert(pubkey.size() == slhdsa::PUBLIC_KEY_SIZE);
+    assert(sig.size() == slhdsa::SIGNATURE_SIZE);
+    if (!this->txdata) return HandleMissingData(m_mdb);
+    std::vector<unsigned char> msg;
+    if (!SignatureMessageSLHDSA(msg, execdata, *txTo, nIn, *this->txdata, m_mdb)) {
+        return set_error(serror, SCRIPT_ERR_SLHDSA_SIG);
+    }
+    if (!VerifySLHDSASignature(sig, pubkey, msg)) return set_error(serror, SCRIPT_ERR_SLHDSA_SIG);
+    return true;
+}
+
+template <class T>
 bool GenericTransactionSignatureChecker<T>::CheckLockTime(const CScriptNum& nLockTime) const
 {
     // There are two kinds of nLockTime: lock-by-blockheight
@@ -1855,6 +2010,8 @@ static bool ExecuteWitnessScript(const std::span<const valtype>& stack_span, con
                 return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
             }
             // New opcodes will be listed here. May use a different sigversion to modify existing opcodes.
+            // OP_CHECKSIGPQADD replaces OP_SUCCESS202 only in enabled output types (P2MR).
+            if (opcode == OP_CHECKSIGPQADD && execdata.m_pqsig_enabled) continue;
             if (IsOpSuccess(opcode)) {
                 if (flags & SCRIPT_VERIFY_DISCOURAGE_OP_SUCCESS) {
                     return set_error(serror, SCRIPT_ERR_DISCOURAGE_OP_SUCCESS);
@@ -2060,6 +2217,8 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
             exec_script = CScript(script.begin(), script.end());
             execdata.m_validation_weight_left = ::GetSerializeSize(witness.stack) + VALIDATION_WEIGHT_OFFSET;
             execdata.m_validation_weight_left_init = true;
+            // P2MR is an enabled output type for OP_CHECKSIGPQADD.
+            execdata.m_pqsig_enabled = (flags & SCRIPT_VERIFY_PQSIG) != 0;
             return ExecuteWitnessScript(stack, exec_script, flags, SigVersion::TAPSCRIPT, checker, execdata, serror);
         }
         if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION) {
@@ -2270,6 +2429,7 @@ const std::map<std::string, script_verify_flag_name>& ScriptFlagNamesToEnum()
         FLAG_NAME(DISCOURAGE_OP_SUCCESS),
         FLAG_NAME(DISCOURAGE_UPGRADABLE_TAPROOT_VERSION),
         FLAG_NAME(P2MR),
+        FLAG_NAME(PQSIG),
     };
 #undef FLAG_NAME
     return g_names_to_enum;

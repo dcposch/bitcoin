@@ -26,10 +26,13 @@ SignatureCache::SignatureCache(const size_t max_size_bytes)
     // 'S' for Schnorr (followed by 0 bytes).
     static constexpr unsigned char PADDING_ECDSA[32] = {'E'};
     static constexpr unsigned char PADDING_SCHNORR[32] = {'S'};
+    static constexpr unsigned char PADDING_SLHDSA[32] = {'L'};
     m_salted_hasher_ecdsa.Write(nonce.begin(), 32);
     m_salted_hasher_ecdsa.Write(PADDING_ECDSA, 32);
     m_salted_hasher_schnorr.Write(nonce.begin(), 32);
     m_salted_hasher_schnorr.Write(PADDING_SCHNORR, 32);
+    m_salted_hasher_slhdsa.Write(nonce.begin(), 32);
+    m_salted_hasher_slhdsa.Write(PADDING_SLHDSA, 32);
 
     const auto [num_elems, approx_size_bytes] = setValid.setup_bytes(max_size_bytes);
     LogInfo("Using %zu MiB out of %zu MiB requested for signature cache, able to store %zu elements",
@@ -46,6 +49,16 @@ void SignatureCache::ComputeEntrySchnorr(uint256& entry, const uint256& hash, st
 {
     CSHA256 hasher = m_salted_hasher_schnorr;
     hasher.Write(hash.begin(), 32).Write(pubkey.data(), pubkey.size()).Write(sig.data(), sig.size()).Finalize(entry.begin());
+}
+
+void SignatureCache::ComputeEntrySLHDSA(uint256& entry, std::span<const unsigned char> msg, std::span<const unsigned char> sig, std::span<const unsigned char> pubkey) const
+{
+    // The message has a variable length, so hash it first. This keeps the entry
+    // unambiguous, because the public key and signature have fixed sizes.
+    unsigned char msg_hash[CSHA256::OUTPUT_SIZE];
+    CSHA256().Write(msg.data(), msg.size()).Finalize(msg_hash);
+    CSHA256 hasher = m_salted_hasher_slhdsa;
+    hasher.Write(msg_hash, sizeof(msg_hash)).Write(pubkey.data(), pubkey.size()).Write(sig.data(), sig.size()).Finalize(entry.begin());
 }
 
 bool SignatureCache::Get(const uint256& entry, const bool erase)
@@ -79,6 +92,16 @@ bool CachingTransactionSignatureChecker::VerifySchnorrSignature(std::span<const 
     m_signature_cache.ComputeEntrySchnorr(entry, sighash, sig, pubkey);
     if (m_signature_cache.Get(entry, !store)) return true;
     if (!TransactionSignatureChecker::VerifySchnorrSignature(sig, pubkey, sighash)) return false;
+    if (store) m_signature_cache.Set(entry);
+    return true;
+}
+
+bool CachingTransactionSignatureChecker::VerifySLHDSASignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, std::span<const unsigned char> msg) const
+{
+    uint256 entry;
+    m_signature_cache.ComputeEntrySLHDSA(entry, msg, sig, pubkey);
+    if (m_signature_cache.Get(entry, !store)) return true;
+    if (!TransactionSignatureChecker::VerifySLHDSASignature(sig, pubkey, msg)) return false;
     if (store) m_signature_cache.Set(entry);
     return true;
 }

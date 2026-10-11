@@ -105,6 +105,7 @@ BASE_SCRIPTS = [
     'feature_fee_estimation.py',
     'feature_taproot.py',
     'feature_p2mr.py',
+    'feature_slhdsa.py',
     'feature_block.py',
     'mempool_ephemeral_dust.py',
     'wallet_conflicts.py',

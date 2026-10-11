@@ -92,6 +92,12 @@ void CChainParams::ApplyDeploymentOptions(const DeploymentOptions& opts)
         case Consensus::BuriedDeployment::DEPLOYMENT_CSV:
             consensus.CSVHeight = int{height};
             break;
+        case Consensus::BuriedDeployment::DEPLOYMENT_P2MR:
+            consensus.P2MRHeight = int{height};
+            break;
+        case Consensus::BuriedDeployment::DEPLOYMENT_PQSIG:
+            consensus.PQSIGHeight = int{height};
+            break;
         }
     }
 

@@ -150,6 +150,11 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_P2MR,
 
+    // OP_CHECKSIGPQADD (SLH-DSA tapscript BIP draft) in tapscript of enabled
+    // output types (P2MR). Without this flag, opcode 0xca is OP_SUCCESS202.
+    //
+    SCRIPT_VERIFY_PQSIG,
+
     // Constants to point to the highest flag in use. Add new flags above this line.
     //
     SCRIPT_VERIFY_END_MARKER
@@ -236,6 +241,10 @@ struct ScriptExecutionData
 
     //! The hash of the corresponding output
     std::optional<uint256> m_output_hash;
+
+    //! Whether OP_CHECKSIGPQADD is active. This is true only for tapscript in an
+    //! enabled output type (P2MR) when SCRIPT_VERIFY_PQSIG is set.
+    bool m_pqsig_enabled = false;
 };
 
 /** Signature hash sizes */
@@ -292,6 +301,13 @@ public:
         return false;
     }
 
+    /** Check an OP_CHECKSIGPQADD signature for SLH-DSA-SHA2-128s.
+     *  pubkey is the 32-byte FIPS 205 public key (without the key type byte). */
+    virtual bool CheckSLHDSASignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const
+    {
+        return false;
+    }
+
     virtual bool CheckLockTime(const CScriptNum& nLockTime) const
     {
          return false;
@@ -317,6 +333,12 @@ enum class MissingDataBehavior
 template<typename T>
 bool SignatureHashSchnorr(uint256& hash_out, ScriptExecutionData& execdata, const T& tx_to, uint32_t in_pos, uint8_t hash_type, SigVersion sigversion, const PrecomputedTransactionData& cache, MissingDataBehavior mdb);
 
+/** Compute the unhashed message M that an OP_CHECKSIGPQADD signature with key type
+ *  SLHDSA_KEY_TYPE_SHA2_128S signs:
+ *  ser_tag("SLHSighash") || 0x00 || SigMsg(0x00, 1) || tapleaf_hash || 0x01 || codesep_pos. */
+template<typename T>
+bool SignatureMessageSLHDSA(std::vector<unsigned char>& msg_out, ScriptExecutionData& execdata, const T& tx_to, uint32_t in_pos, const PrecomputedTransactionData& cache, MissingDataBehavior mdb);
+
 template <class T>
 class GenericTransactionSignatureChecker : public BaseSignatureChecker
 {
@@ -331,12 +353,14 @@ private:
 protected:
     virtual bool VerifyECDSASignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const;
     virtual bool VerifySchnorrSignature(std::span<const unsigned char> sig, const XOnlyPubKey& pubkey, const uint256& sighash) const;
+    virtual bool VerifySLHDSASignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, std::span<const unsigned char> msg) const;
 
 public:
     GenericTransactionSignatureChecker(const T* txToIn, unsigned int nInIn, const CAmount& amountIn, MissingDataBehavior mdb) : txTo(txToIn), m_mdb(mdb), nIn(nInIn), amount(amountIn), txdata(nullptr) {}
     GenericTransactionSignatureChecker(const T* txToIn, unsigned int nInIn, const CAmount& amountIn, const PrecomputedTransactionData& txdataIn, MissingDataBehavior mdb) : txTo(txToIn), m_mdb(mdb), nIn(nInIn), amount(amountIn), txdata(&txdataIn) {}
     bool CheckECDSASignature(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const override;
     bool CheckSchnorrSignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const override;
+    bool CheckSLHDSASignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const override;
     bool CheckLockTime(const CScriptNum& nLockTime) const override;
     bool CheckSequence(const CScriptNum& nSequence) const override;
 };
@@ -360,6 +384,11 @@ public:
     bool CheckSchnorrSignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const override
     {
         return m_checker.CheckSchnorrSignature(sig, pubkey, sigversion, execdata, serror);
+    }
+
+    bool CheckSLHDSASignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const override
+    {
+        return m_checker.CheckSLHDSASignature(sig, pubkey, sigversion, execdata, serror);
     }
 
     bool CheckLockTime(const CScriptNum& nLockTime) const override

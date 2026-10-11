@@ -39,9 +39,11 @@ static_assert(DEFAULT_VALIDATION_CACHE_BYTES == DEFAULT_SIGNATURE_CACHE_BYTES + 
 class SignatureCache
 {
 private:
-    //! Entries are SHA256(nonce || 'E' or 'S' || 31 zero bytes || signature hash || public key || signature):
+    //! Entries are SHA256(nonce || 'E' or 'S' || 31 zero bytes || signature hash || public key || signature),
+    //! or SHA256(nonce || 'L' || 31 zero bytes || SHA256(message) || public key || signature) for SLH-DSA:
     CSHA256 m_salted_hasher_ecdsa;
     CSHA256 m_salted_hasher_schnorr;
+    CSHA256 m_salted_hasher_slhdsa;
     typedef CuckooCache::cache<uint256, SignatureCacheHasher> map_type;
     map_type setValid;
     std::shared_mutex cs_sigcache;
@@ -55,6 +57,8 @@ public:
     void ComputeEntryECDSA(uint256& entry, const uint256 &hash, const std::vector<unsigned char>& vchSig, const CPubKey& pubkey) const;
 
     void ComputeEntrySchnorr(uint256& entry, const uint256 &hash, std::span<const unsigned char> sig, const XOnlyPubKey& pubkey) const;
+
+    void ComputeEntrySLHDSA(uint256& entry, std::span<const unsigned char> msg, std::span<const unsigned char> sig, std::span<const unsigned char> pubkey) const;
 
     bool Get(const uint256& entry, bool erase);
 
@@ -72,6 +76,7 @@ public:
 
     bool VerifyECDSASignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const override;
     bool VerifySchnorrSignature(std::span<const unsigned char> sig, const XOnlyPubKey& pubkey, const uint256& sighash) const override;
+    bool VerifySLHDSASignature(std::span<const unsigned char> sig, std::span<const unsigned char> pubkey, std::span<const unsigned char> msg) const override;
 };
 
 #endif // BITCOIN_SCRIPT_SIGCACHE_H

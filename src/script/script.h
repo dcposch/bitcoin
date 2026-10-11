@@ -64,6 +64,19 @@ inline constexpr int64_t VALIDATION_WEIGHT_PER_SIGOP_PASSED{50};
 // How much weight budget is added to the witness size (Tapscript only, see BIP 342).
 inline constexpr int64_t VALIDATION_WEIGHT_OFFSET{50};
 
+// Validation weight per OP_CHECKSIGPQADD check with a signature (a chunk count larger than 0),
+// for key type 0x01 (SLH-DSA-SHA2-128s) and for unknown key types. A soft fork that defines a
+// key type can only raise its charge, so unknown key types have the lowest charge.
+static constexpr int64_t VALIDATION_WEIGHT_PER_SLHDSA_CHECK{2000};
+static constexpr int64_t VALIDATION_WEIGHT_PER_UNKNOWN_PQ_KEY_CHECK{50};
+
+// OP_CHECKSIGPQADD: maximum signature chunk count, and the key type of SLH-DSA-SHA2-128s.
+static constexpr unsigned int MAX_SLHDSA_CHUNK_COUNT{0x7f};
+static constexpr uint8_t SLHDSA_KEY_TYPE_SHA2_128S{0x01};
+static constexpr size_t SLHDSA_SHA2_128S_PUBKEY_SIZE{33};
+static constexpr unsigned int SLHDSA_SHA2_128S_CHUNK_COUNT{16};
+static constexpr size_t SLHDSA_SHA2_128S_LAST_CHUNK_SIZE{56};
+
 template <typename T>
 std::vector<unsigned char> ToByteVector(const T& in)
 {
@@ -209,6 +222,10 @@ enum opcodetype
 
     // Opcode added by BIP 342 (Tapscript)
     OP_CHECKSIGADD = 0xba,
+
+    // Opcode added by the SLH-DSA tapscript BIP draft. It is only available in
+    // tapscript of enabled output types (P2MR). Elsewhere it is OP_SUCCESS202.
+    OP_CHECKSIGPQADD = 0xca,
 
     OP_INVALIDOPCODE = 0xff,
 };

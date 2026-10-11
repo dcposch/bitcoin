@@ -56,8 +56,10 @@ inline constexpr unsigned int MAX_STANDARD_P2WSH_STACK_ITEMS{100};
 inline constexpr unsigned int MAX_STANDARD_P2WSH_STACK_ITEM_SIZE{80};
 /** The maximum size in bytes of each witness stack item in a standard BIP 342 script (Taproot, leaf version 0xc0) */
 inline constexpr unsigned int MAX_STANDARD_TAPSCRIPT_STACK_ITEM_SIZE{80};
-/** The maximum size in bytes of each witness stack item in a standard BIP 360 draft script (P2MR, leaf version 0xc0) */
-inline constexpr unsigned int MAX_STANDARD_P2MR_STACK_ITEM_SIZE{80};
+/** The maximum size in bytes of each witness stack item in a standard BIP 360 draft script (P2MR, leaf version 0xc0).
+ *  OP_CHECKSIGPQADD signatures use chunks of MAX_SCRIPT_ELEMENT_SIZE (520) bytes, so the BIP 342 policy
+ *  limit of 80 bytes does not apply to P2MR. */
+inline constexpr unsigned int MAX_STANDARD_P2MR_STACK_ITEM_SIZE{MAX_SCRIPT_ELEMENT_SIZE};
 /** The maximum size in bytes of a standard witnessScript */
 inline constexpr unsigned int MAX_STANDARD_P2WSH_SCRIPT_SIZE{3600};
 /** The maximum size of a standard ScriptSig */
@@ -129,6 +131,7 @@ inline constexpr script_verify_flags STANDARD_SCRIPT_VERIFY_FLAGS{MANDATORY_SCRI
                                                              SCRIPT_VERIFY_WITNESS_PUBKEYTYPE |
                                                              SCRIPT_VERIFY_CONST_SCRIPTCODE |
                                                              SCRIPT_VERIFY_P2MR |
+                                                             SCRIPT_VERIFY_PQSIG |
                                                              SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION |
                                                              SCRIPT_VERIFY_DISCOURAGE_OP_SUCCESS |
                                                              SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_PUBKEYTYPE};

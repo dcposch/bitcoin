@@ -2284,6 +2284,16 @@ script_verify_flags GetBlockScriptFlags(const CBlockIndex& block_index, const Ch
         flags |= SCRIPT_VERIFY_NULLDUMMY;
     }
 
+    // Enforce the BIP 360 draft (P2MR). Only test chains can activate it.
+    if (DeploymentActiveAt(block_index, chainman, Consensus::DEPLOYMENT_P2MR)) {
+        flags |= SCRIPT_VERIFY_P2MR;
+    }
+
+    // Enforce OP_CHECKSIGPQADD in P2MR. Only test chains can activate it.
+    if (DeploymentActiveAt(block_index, chainman, Consensus::DEPLOYMENT_PQSIG)) {
+        flags |= SCRIPT_VERIFY_PQSIG;
+    }
+
     return flags;
 }
 

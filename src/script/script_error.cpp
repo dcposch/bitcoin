@@ -113,6 +113,14 @@ std::string ScriptErrorString(const ScriptError serror)
             return "OP_IF/NOTIF argument must be minimal in tapscript";
         case SCRIPT_ERR_TAPSCRIPT_EMPTY_PUBKEY:
             return "Empty public key in tapscript";
+        case SCRIPT_ERR_SLHDSA_CHUNK_COUNT:
+            return "Invalid OP_CHECKSIGPQADD signature chunk count";
+        case SCRIPT_ERR_SLHDSA_PUBKEY_SIZE:
+            return "Invalid SLH-DSA public key size";
+        case SCRIPT_ERR_SLHDSA_SIG_SIZE:
+            return "Invalid SLH-DSA signature chunk count or chunk size";
+        case SCRIPT_ERR_SLHDSA_SIG:
+            return "Invalid SLH-DSA signature";
         case SCRIPT_ERR_OP_CODESEPARATOR:
             return "Using OP_CODESEPARATOR in non-witness script";
         case SCRIPT_ERR_SIG_FINDANDDELETE:
